@@ -19,6 +19,8 @@ Stack: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · Su
      (calcula precios en la base, genera el número BH-XXXX, valida todo).
    - `supabase/migrations/002_rls_seguridad.sql`: cierra la lectura pública de
      pedidos y la edición pública de productos.
+   - `supabase/migrations/003_helper_privado_y_datos.sql`: saca el helper de RLS
+     de la API pública y limpia dos ingredientes.
 4. `npm run dev`
 
 ## Estructura
@@ -33,7 +35,7 @@ Stack: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · Su
 | `lib/cart.ts`                | Carrito (persistido en localStorage)                  |
 | `lib/order.ts`               | Payload del pedido, errores, mensaje de WhatsApp      |
 | `lib/supabase.ts`            | Cliente Supabase tipado                               |
-| `lib/database.types.ts`      | Tipos de las tablas                                   |
+| `lib/database.types.ts`      | Tipos generados por Supabase                          |
 
 ## Valores internos
 

@@ -21,7 +21,24 @@ Stack: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · Su
      pedidos y la edición pública de productos.
    - `supabase/migrations/003_helper_privado_y_datos.sql`: saca el helper de RLS
      de la API pública y limpia dos ingredientes.
+   - `supabase/migrations/004_admin_staff.sql`: permisos del panel (opciones,
+     ingredientes, categorías), Realtime en pedidos y bucket de fotos.
 4. `npm run dev`
+
+## Panel de administración (`/admin`)
+
+- Login con Supabase Auth (email y contraseña).
+- Solo entran usuarios cargados en `restaurant_users` para este restaurante:
+  ```sql
+  insert into restaurant_users (restaurant_id, user_id, role)
+  select '926cd9b7-7fa2-4664-8cd8-c65e80ea1956', id, 'owner'
+  from auth.users where email = 'tu@email.com';
+  ```
+- **Pedidos**: en vivo (Realtime) con aviso sonoro, detalle completo, cambio de
+  estado (`pending → confirmed → preparing → ready → delivered`, o `cancelled`)
+  y WhatsApp directo al cliente.
+- **Productos**: disponibilidad con un toque, alta/edición, fotos (Storage),
+  grupos de opciones, extras e ingredientes quitables.
 
 ## Estructura
 
@@ -35,6 +52,8 @@ Stack: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · Su
 | `lib/cart.ts`                | Carrito (persistido en localStorage)                  |
 | `lib/order.ts`               | Payload del pedido, errores, mensaje de WhatsApp      |
 | `lib/supabase.ts`            | Cliente Supabase tipado                               |
+| `lib/admin/*`                | Sesión, pedidos, productos y opciones del panel       |
+| `app/admin/*`                | Panel de administración                               |
 | `lib/database.types.ts`      | Tipos generados por Supabase                          |
 
 ## Valores internos

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type OrderStatus =
   | "NUEVO"
@@ -17,7 +17,7 @@ type Order = {
   order_number: string;
   customer_name: string;
   customer_phone: string;
-  customer_adress: string | null;
+  customer_address: string | null;
   order_type: string;
   payment_method: string;
   status: OrderStatus;

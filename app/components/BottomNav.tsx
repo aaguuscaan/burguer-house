@@ -1,41 +1,49 @@
 "use client";
 
-type BottomNavProps = {
-  cartCount: number;
-};
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
-export default function BottomNav({
-  cartCount,
-}: BottomNavProps) {
+import { useCart } from "@/lib/cart";
+
+export default function BottomNav() {
+  const pathname = usePathname();
+  const { totalItems } = useCart();
+
+  const links = [
+    { href: "/", label: "Inicio", icon: "⌂", active: pathname === "/" },
+    { href: "/#menu", label: "Menú", icon: "☷", active: false },
+    {
+      href: "/cart",
+      label: "Carrito",
+      icon: "🛒",
+      active: pathname === "/cart",
+      badge: totalItems,
+    },
+    { href: "/#info", label: "Info", icon: "ⓘ", active: false },
+  ];
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-[#0d0d0df2] px-4 pb-[calc(env(safe-area-inset-bottom)+8px)] pt-3 backdrop-blur-xl md:hidden">
       <div className="mx-auto flex max-w-md items-center justify-around">
-        <button className="flex flex-col items-center gap-1 text-red-500">
-          <span className="text-xl">⌂</span>
-          <span className="text-[10px] font-bold">Inicio</span>
-        </button>
+        {links.map((link) => (
+          <Link
+            key={link.label}
+            href={link.href}
+            className={`relative flex min-w-14 flex-col items-center gap-1 ${
+              link.active ? "text-red-500" : "text-neutral-400"
+            }`}
+          >
+            <span className="text-xl">{link.icon}</span>
 
-        <button className="flex flex-col items-center gap-1 text-neutral-400">
-          <span className="text-xl">☷</span>
-          <span className="text-[10px] font-bold">Menú</span>
-        </button>
+            {link.badge !== undefined && link.badge > 0 && (
+              <span className="absolute -top-2 right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">
+                {link.badge}
+              </span>
+            )}
 
-        <button className="relative flex flex-col items-center gap-1 text-neutral-400">
-          <span className="text-xl">🛒</span>
-
-          {cartCount > 0 && (
-            <span className="absolute -right-3 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">
-              {cartCount}
-            </span>
-          )}
-
-          <span className="text-[10px] font-bold">Carrito</span>
-        </button>
-
-        <button className="flex flex-col items-center gap-1 text-neutral-400">
-          <span className="text-xl">ⓘ</span>
-          <span className="text-[10px] font-bold">Info</span>
-        </button>
+            <span className="text-[10px] font-bold">{link.label}</span>
+          </Link>
+        ))}
       </div>
     </nav>
   );

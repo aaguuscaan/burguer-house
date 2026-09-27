@@ -1,14 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCart } from "../context/CartContext";
-import { formatPrice } from "../data/menu";
+
+import { useCart } from "@/lib/cart";
+import { formatPrice } from "@/lib/format";
 
 export default function CartButton() {
-  const {
-    totalItems,
-    totalPrice,
-  } = useCart();
+  const { totalItems, totalPrice } = useCart();
 
   if (totalItems === 0) {
     return null;
@@ -26,21 +24,16 @@ export default function CartButton() {
 
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-white/70">
-            Tu pedido
+            Ver pedido
           </p>
 
           <p className="text-sm font-black">
-            {totalItems}{" "}
-            {totalItems === 1
-              ? "producto"
-              : "productos"}
+            {totalItems} {totalItems === 1 ? "producto" : "productos"}
           </p>
         </div>
       </div>
 
-      <span className="text-lg font-black">
-        {formatPrice(totalPrice)}
-      </span>
+      <span className="text-lg font-black">{formatPrice(totalPrice)}</span>
     </Link>
   );
 }

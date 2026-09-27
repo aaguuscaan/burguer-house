@@ -1,11 +1,14 @@
-import type { Metadata } from "next";
-import { CartProvider } from "./context/CartContext";
+import type { Metadata, Viewport } from "next";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Burger House",
-  description:
-    "Comida real. Sin vueltas.",
+  description: "Comida real. Sin vueltas.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#090909",
 };
 
 export default function RootLayout({
@@ -15,11 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body>
-        <CartProvider>
-          {children}
-        </CartProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -149,7 +149,10 @@ export type Database = {
           customer_address: string | null
           customer_name: string
           customer_phone: string | null
+          delivery_distance_km: number | null
           delivery_fee: number
+          delivery_lat: number | null
+          delivery_lng: number | null
           discount: number
           id: string
           notes: string | null
@@ -167,7 +170,10 @@ export type Database = {
           customer_address?: string | null
           customer_name: string
           customer_phone?: string | null
+          delivery_distance_km?: number | null
           delivery_fee?: number
+          delivery_lat?: number | null
+          delivery_lng?: number | null
           discount?: number
           id?: string
           notes?: string | null
@@ -185,7 +191,10 @@ export type Database = {
           customer_address?: string | null
           customer_name?: string
           customer_phone?: string | null
+          delivery_distance_km?: number | null
           delivery_fee?: number
+          delivery_lat?: number | null
+          delivery_lng?: number | null
           discount?: number
           id?: string
           notes?: string | null
@@ -466,6 +475,7 @@ export type Database = {
       }
       restaurants: {
         Row: {
+          accepting_orders: boolean
           address: string | null
           created_at: string | null
           delivery_enabled: boolean | null
@@ -475,17 +485,22 @@ export type Database = {
           description: string | null
           id: string
           instagram: string | null
+          latitude: number | null
           logo_url: string | null
+          longitude: number | null
           name: string
           opening_hours: string | null
           phone: string | null
           primary_color: string | null
+          schedule: Json
           secondary_color: string | null
           slug: string
+          timezone: string
           updated_at: string | null
           whatsapp_number: string | null
         }
         Insert: {
+          accepting_orders?: boolean
           address?: string | null
           created_at?: string | null
           delivery_enabled?: boolean | null
@@ -495,17 +510,22 @@ export type Database = {
           description?: string | null
           id?: string
           instagram?: string | null
+          latitude?: number | null
           logo_url?: string | null
+          longitude?: number | null
           name: string
           opening_hours?: string | null
           phone?: string | null
           primary_color?: string | null
+          schedule?: Json
           secondary_color?: string | null
           slug: string
+          timezone?: string
           updated_at?: string | null
           whatsapp_number?: string | null
         }
         Update: {
+          accepting_orders?: boolean
           address?: string | null
           created_at?: string | null
           delivery_enabled?: boolean | null
@@ -515,13 +535,17 @@ export type Database = {
           description?: string | null
           id?: string
           instagram?: string | null
+          latitude?: number | null
           logo_url?: string | null
+          longitude?: number | null
           name?: string
           opening_hours?: string | null
           phone?: string | null
           primary_color?: string | null
+          schedule?: Json
           secondary_color?: string | null
           slug?: string
+          timezone?: string
           updated_at?: string | null
           whatsapp_number?: string | null
         }
@@ -536,6 +560,7 @@ export type Database = {
         Args: { p_items: Json; p_order: Json }
         Returns: Json
       }
+      get_order_tracking: { Args: { p_order_id: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never

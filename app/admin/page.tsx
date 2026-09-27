@@ -9,6 +9,8 @@ import {
   storeConfig,
 } from "../data/store";
 
+import AcceptingOrdersToggle from "./components/AcceptingOrdersToggle";
+
 import {
   ACTIVE_STATUSES,
   type AdminOrder,
@@ -21,6 +23,7 @@ import {
   updateOrderStatus,
 } from "@/lib/admin/orders";
 import { formatPrice } from "@/lib/format";
+import { formatKm } from "@/lib/geo";
 import { supabase } from "@/lib/supabase";
 
 type Tab = "active" | "finished";
@@ -215,7 +218,8 @@ export default function AdminOrdersPage() {
           <h1 className="mt-1 text-3xl font-black">Pedidos</h1>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AcceptingOrdersToggle />
           <span
             className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-black ${
               live ? "bg-green-500/10 text-green-400" : "bg-white/5 text-neutral-500"
@@ -498,6 +502,17 @@ function CustomerBlock({ order, type }: { order: AdminOrder; type: OrderType }) 
         </p>
         {order.customerAddress && (
           <p className="mt-0.5 break-words text-neutral-300">{order.customerAddress}</p>
+        )}
+        {order.location && (
+          <a
+            href={`https://www.google.com/maps/search/?api=1&query=${order.location.lat},${order.location.lng}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-1 text-xs font-bold text-neutral-300 hover:bg-white/10"
+          >
+            📍 Ver en el mapa
+            {order.distanceKm !== null && ` · ${formatKm(order.distanceKm)}`}
+          </a>
         )}
         {order.customerPhone && (
           <a href={`tel:${order.customerPhone}`} className="mt-0.5 block text-neutral-500 hover:text-white">

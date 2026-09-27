@@ -10,9 +10,13 @@ import { type CartItem, useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/format";
 import { isRemoteImage } from "@/lib/images";
 import { itemDetailLines } from "@/lib/order";
+import { useStoreSettings } from "@/lib/store-settings";
 
 export default function CartPage() {
   const { items, totalItems, totalPrice } = useCart();
+  const settingsState = useStoreSettings();
+  const freeFrom =
+    settingsState.status === "ready" ? settingsState.settings.deliveryFreeFrom : null;
 
   return (
     <main className="min-h-screen bg-[#090909] pb-32 text-white">
@@ -78,7 +82,7 @@ export default function CartPage() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-neutral-400">Envío</span>
                   <span className="text-right font-bold text-neutral-500">
-                    {totalPrice >= storeConfig.delivery.freeFrom
+                    {freeFrom !== null && totalPrice >= freeFrom
                       ? "Gratis"
                       : "Se calcula en el checkout"}
                   </span>

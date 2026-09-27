@@ -5,50 +5,11 @@ import {
 } from "@/app/data/store";
 import { supabase } from "@/lib/supabase";
 
-/*
- * =====================================================================
- * Estados (mismos valores que la constraint orders_status_check)
- * =====================================================================
- */
+import { type OrderStatus, isOrderStatus } from "@/lib/order";
+import { ACTIVE_STATUSES } from "@/lib/order-status";
 
-export const ORDER_STATUSES = [
-  "pending",
-  "confirmed",
-  "preparing",
-  "ready",
-  "delivered",
-  "cancelled",
-] as const;
-
-export type OrderStatus = (typeof ORDER_STATUSES)[number];
-
-export const ACTIVE_STATUSES: OrderStatus[] = [
-  "pending",
-  "confirmed",
-  "preparing",
-  "ready",
-];
-
-export function isOrderStatus(value: string): value is OrderStatus {
-  return ORDER_STATUSES.some((status) => status === value);
-}
-
-export function statusLabel(status: OrderStatus, orderType: OrderType) {
-  switch (status) {
-    case "pending":
-      return "Nuevo";
-    case "confirmed":
-      return "Confirmado";
-    case "preparing":
-      return "En preparación";
-    case "ready":
-      return orderType === "delivery" ? "Listo para enviar" : "Listo para retirar";
-    case "delivered":
-      return orderType === "delivery" ? "Entregado" : "Retirado";
-    case "cancelled":
-      return "Cancelado";
-  }
-}
+export { ACTIVE_STATUSES, type OrderStatus };
+export { statusLabel } from "@/lib/order-status";
 
 export const statusClasses: Record<OrderStatus, string> = {
   pending: "bg-red-600 text-white",
@@ -116,6 +77,8 @@ export type AdminOrder = {
   total: number;
   notes: string | null;
   createdAt: string;
+  location: { lat: number; lng: number } | null;
+  distanceKm: number | null;
   items: AdminOrderItem[];
 };
 
@@ -143,7 +106,7 @@ export async function fetchAdminOrders(): Promise<AdminOrder[] | null> {
       `
         id, order_number, customer_name, customer_phone, customer_address,
         order_type, payment_method, status, subtotal, delivery_fee, total,
-        notes, created_at,
+        notes, created_at, delivery_lat, delivery_lng, delivery_distance_km,
         order_items (
           id, product_name, quantity, total_price, created_at,
           order_item_options ( id, option_name, option_value, price )
@@ -176,6 +139,12 @@ export async function fetchAdminOrders(): Promise<AdminOrder[] | null> {
     total: Number(order.total),
     notes: order.notes,
     createdAt: order.created_at ?? new Date(0).toISOString(),
+    location:
+      order.delivery_lat !== null && order.delivery_lng !== null
+        ? { lat: order.delivery_lat, lng: order.delivery_lng }
+        : null,
+    distanceKm:
+      order.delivery_distance_km === null ? null : Number(order.delivery_distance_km),
     items: [...order.order_items]
       .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))
       .map((item) => ({

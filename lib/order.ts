@@ -1,6 +1,7 @@
 import type { CartItem } from "./cart";
 import type { Json } from "./database.types";
 import { formatPrice } from "./format";
+import type { LatLng } from "./geo";
 
 import {
   type OrderType,
@@ -12,11 +13,8 @@ import {
 
 /*
  * =====================================================================
- * Detalle legible de una línea del carrito / pedido
+ * Detalle legible de una línea del carrito
  * =====================================================================
- * Un único lugar que decide cómo se muestran opciones, extras,
- * ingredientes quitados y observaciones (carrito, checkout,
- * confirmación y WhatsApp usan lo mismo).
  */
 
 export type DetailLine = {
@@ -52,34 +50,15 @@ export function itemDetailLines(
 
 /*
  * =====================================================================
- * Costo de envío (estimado en el front, definitivo en la base)
+ * Payload para create_burger_house_order (sin precios: los calcula la base)
  * =====================================================================
- */
-
-export function estimateDeliveryFee(
-  orderType: OrderType | null,
-  subtotal: number
-) {
-  if (orderType !== "delivery") {
-    return 0;
-  }
-
-  return subtotal >= storeConfig.delivery.freeFrom
-    ? 0
-    : storeConfig.delivery.baseCost;
-}
-
-/*
- * =====================================================================
- * Payload para create_burger_house_order
- * =====================================================================
- * No se mandan precios: la base los calcula.
  */
 
 export type CustomerData = {
   name: string;
   phone: string;
   address: string | null;
+  location: LatLng | null;
   notes: string;
   orderType: OrderType;
   paymentMethod: PaymentMethod;
@@ -98,6 +77,8 @@ export function buildOrderPayload(
       order_type: customer.orderType,
       payment_method: customer.paymentMethod,
       notes: customer.notes,
+      delivery_lat: customer.location?.lat ?? null,
+      delivery_lng: customer.location?.lng ?? null,
     },
 
     p_items: items.map((item) => ({
@@ -114,13 +95,41 @@ export function buildOrderPayload(
   };
 }
 
+type JsonObject = { [key: string]: Json | undefined };
+
+function isJsonObject(value: Json | undefined): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/* create_burger_house_order devuelve { id, order_number, … }. */
+export function parseCreatedOrderId(data: Json): string | null {
+  return isJsonObject(data) && typeof data.id === "string" ? data.id : null;
+}
+
 /*
  * =====================================================================
- * Respuesta de la base
+ * Pedido tal como está guardado (get_order_tracking)
  * =====================================================================
- * La confirmación y el WhatsApp usan SOLO estos datos: son exactamente
- * los precios y opciones que quedaron guardados en Supabase.
  */
+
+export const ORDER_STATUSES = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "delivered",
+  "cancelled",
+] as const;
+
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export function isOrderStatus(value: unknown): value is OrderStatus {
+  return ORDER_STATUSES.some((status) => status === value);
+}
+
+function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return value === "cash" || value === "transfer" || value === "card";
+}
 
 export type SavedOrderOption = {
   name: string;
@@ -136,106 +145,99 @@ export type SavedOrderItem = {
   options: SavedOrderOption[];
 };
 
-export type SavedOrder = {
+export type TrackedOrder = {
   id: string;
   orderNumber: string;
+  status: OrderStatus;
+  orderType: OrderType;
+  paymentMethod: PaymentMethod | null;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string | null;
+  notes: string | null;
   subtotal: number;
   deliveryFee: number;
   total: number;
+  createdAt: string;
   items: SavedOrderItem[];
 };
 
-type JsonObject = { [key: string]: Json | undefined };
-
-function isJsonObject(value: Json | undefined): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseSavedOption(value: Json): SavedOrderOption | null {
-  if (!isJsonObject(value)) {
-    return null;
-  }
+function parseOption(value: Json): SavedOrderOption | null {
+  if (!isJsonObject(value)) return null;
 
   const { option_name, option_value, price } = value;
 
-  if (
-    typeof option_name !== "string" ||
-    typeof option_value !== "string" ||
-    typeof price !== "number"
-  ) {
-    return null;
-  }
-
-  return { name: option_name, value: option_value, price };
+  return typeof option_name === "string" && typeof option_value === "string"
+    ? { name: option_name, value: option_value, price: Number(price ?? 0) }
+    : null;
 }
 
-function parseSavedItem(value: Json): SavedOrderItem | null {
-  if (!isJsonObject(value)) {
-    return null;
-  }
+function parseItem(value: Json): SavedOrderItem | null {
+  if (!isJsonObject(value)) return null;
 
   const { product_name, quantity, unit_price, total_price, options } = value;
 
-  if (
-    typeof product_name !== "string" ||
-    typeof quantity !== "number" ||
-    typeof unit_price !== "number" ||
-    typeof total_price !== "number" ||
-    !Array.isArray(options)
-  ) {
-    return null;
-  }
-
-  const parsedOptions = options.map(parseSavedOption);
-
-  if (parsedOptions.some((option) => option === null)) {
+  if (typeof product_name !== "string" || typeof quantity !== "number") {
     return null;
   }
 
   return {
     productName: product_name,
     quantity,
-    unitPrice: unit_price,
-    totalPrice: total_price,
-    options: parsedOptions.filter(
-      (option): option is SavedOrderOption => option !== null
-    ),
+    unitPrice: Number(unit_price),
+    totalPrice: Number(total_price),
+    options: Array.isArray(options)
+      ? options.map(parseOption).filter((option) => option !== null)
+      : [],
   };
 }
 
-export function parseSavedOrder(data: Json): SavedOrder | null {
-  if (!isJsonObject(data)) {
-    return null;
-  }
+export function parseTrackedOrder(data: Json): TrackedOrder | null {
+  if (!isJsonObject(data)) return null;
 
-  const { id, order_number, subtotal, delivery_fee, total, items } = data;
+  const {
+    id,
+    order_number,
+    status,
+    order_type,
+    payment_method,
+    customer_name,
+    customer_phone,
+    customer_address,
+    notes,
+    subtotal,
+    delivery_fee,
+    total,
+    created_at,
+    items,
+  } = data;
 
   if (
     typeof id !== "string" ||
     typeof order_number !== "string" ||
-    typeof subtotal !== "number" ||
-    typeof delivery_fee !== "number" ||
-    typeof total !== "number" ||
+    !isOrderStatus(status) ||
+    typeof customer_name !== "string" ||
+    typeof created_at !== "string" ||
     !Array.isArray(items)
   ) {
-    return null;
-  }
-
-  const parsedItems = items.map(parseSavedItem);
-
-  if (parsedItems.some((item) => item === null)) {
     return null;
   }
 
   return {
     id,
     orderNumber: order_number,
-    subtotal,
-    deliveryFee: delivery_fee,
-    total,
-    items: parsedItems.filter(
-      (item): item is SavedOrderItem => item !== null
-    ),
+    status,
+    orderType: order_type === "delivery" ? "delivery" : "pickup",
+    paymentMethod: isPaymentMethod(payment_method) ? payment_method : null,
+    customerName: customer_name,
+    customerPhone: typeof customer_phone === "string" ? customer_phone : "",
+    customerAddress: typeof customer_address === "string" ? customer_address : null,
+    notes: typeof notes === "string" ? notes : null,
+    subtotal: Number(subtotal),
+    deliveryFee: Number(delivery_fee),
+    total: Number(total),
+    createdAt: created_at,
+    items: items.map(parseItem).filter((item) => item !== null),
   };
 }
 
@@ -244,40 +246,36 @@ export function parseSavedOrder(data: Json): SavedOrder | null {
  *   "Elegí tu helado: Crema" · "Sin Cebolla" · "Obs.: bien cocida"
  */
 export function savedOptionText(option: SavedOrderOption) {
-  if (option.name === "Sin") {
-    return `Sin ${option.value}`;
-  }
-
-  if (option.name === "Observaciones") {
-    return `Obs.: ${option.value}`;
-  }
-
+  if (option.name === "Sin") return `Sin ${option.value}`;
+  if (option.name === "Observaciones") return `Obs.: ${option.value}`;
   return `${option.name}: ${option.value}`;
 }
-
-export type ConfirmedOrder = SavedOrder & {
-  customer: CustomerData;
-};
 
 /*
  * =====================================================================
  * Errores → mensajes para el usuario
  * =====================================================================
- * La función SQL lanza códigos cortos. Nunca mostramos el error técnico.
  */
 
 const OPTIONS_CHANGED =
   "Cambiaron las opciones de un producto. Quitalo del carrito y volvé a agregarlo.";
 
 const ORDER_ERROR_MESSAGES: Record<string, string> = {
+  STORE_PAUSED: "En este momento no estamos tomando pedidos. Probá en un rato.",
+  STORE_CLOSED: "Ahora estamos cerrados. Podés hacer tu pedido cuando abramos.",
   INVALID_NAME: "Revisá tu nombre.",
   INVALID_PHONE:
     "Revisá tu teléfono: tiene que tener entre 8 y 15 números, con código de área.",
   INVALID_ADDRESS: "Necesitamos calle y número para el delivery.",
+  MISSING_LOCATION: "Marcá tu ubicación en el mapa para el delivery.",
+  OUT_OF_RANGE:
+    "Tu dirección está fuera de nuestra zona de delivery. Podés elegir retiro en el local.",
   INVALID_ORDER_TYPE: "Elegí si querés delivery o retiro.",
   INVALID_PAYMENT_METHOD: "Elegí un método de pago.",
   DELIVERY_DISABLED:
     "En este momento no estamos haciendo delivery. Podés elegir retiro en el local.",
+  TOO_MANY_ORDERS:
+    "Recibimos varios pedidos seguidos desde este teléfono. Esperá unos minutos o escribinos por WhatsApp.",
   EMPTY_CART: "Tu carrito está vacío.",
   TOO_MANY_ITEMS: "El pedido tiene demasiados productos. Escribinos por WhatsApp.",
   INVALID_QUANTITY: "Revisá las cantidades de tu pedido.",
@@ -299,34 +297,33 @@ export function orderErrorMessage(code: string | undefined) {
 
 /*
  * =====================================================================
- * WhatsApp
+ * WhatsApp (se arma con el pedido GUARDADO)
  * =====================================================================
  */
 
-export function buildWhatsAppMessage(order: ConfirmedOrder) {
-  const { customer } = order;
+export function buildWhatsAppMessage(order: TrackedOrder, trackingUrl: string) {
   const lines: string[] = [];
 
   lines.push(`*${storeConfig.name.toUpperCase()}*`);
   lines.push(`Pedido *${order.orderNumber}*`);
   lines.push("");
 
-  lines.push(`*Cliente:* ${customer.name}`);
-  lines.push(`*Teléfono:* ${customer.phone}`);
+  lines.push(`*Cliente:* ${order.customerName}`);
+  lines.push(`*Teléfono:* ${order.customerPhone}`);
   lines.push(
-    customer.orderType === "delivery"
-      ? `*Entrega:* Delivery — ${customer.address ?? ""}`
+    order.orderType === "delivery"
+      ? `*Entrega:* Delivery — ${order.customerAddress ?? ""}`
       : `*Entrega:* ${orderTypeLabels.pickup}`
   );
-  lines.push(`*Pago:* ${paymentMethodLabels[customer.paymentMethod]}`);
+  if (order.paymentMethod) {
+    lines.push(`*Pago:* ${paymentMethodLabels[order.paymentMethod]}`);
+  }
   lines.push("");
 
   lines.push("*Detalle*");
 
   order.items.forEach((item) => {
-    lines.push(
-      `${item.quantity}x ${item.productName} — ${formatPrice(item.totalPrice)}`
-    );
+    lines.push(`${item.quantity}x ${item.productName} — ${formatPrice(item.totalPrice)}`);
 
     item.options.forEach((option) => {
       lines.push(`   • ${savedOptionText(option)}`);
@@ -336,26 +333,25 @@ export function buildWhatsAppMessage(order: ConfirmedOrder) {
   lines.push("");
   lines.push(`Subtotal: ${formatPrice(order.subtotal)}`);
 
-  if (customer.orderType === "delivery") {
+  if (order.orderType === "delivery") {
     lines.push(
-      `Envío: ${
-        order.deliveryFee === 0 ? "Gratis" : formatPrice(order.deliveryFee)
-      }`
+      `Envío: ${order.deliveryFee === 0 ? "Gratis" : formatPrice(order.deliveryFee)}`
     );
   }
 
   lines.push(`*Total: ${formatPrice(order.total)}*`);
 
-  if (customer.notes) {
+  if (order.notes) {
     lines.push("");
-    lines.push(`*Notas:* ${customer.notes}`);
+    lines.push(`*Notas:* ${order.notes}`);
   }
+
+  lines.push("");
+  lines.push(`Seguimiento: ${trackingUrl}`);
 
   return lines.join("\n");
 }
 
-export function whatsAppUrl(order: ConfirmedOrder) {
-  return `https://wa.me/${storeConfig.whatsapp}?text=${encodeURIComponent(
-    buildWhatsAppMessage(order)
-  )}`;
+export function whatsAppUrl(whatsappNumber: string, message: string) {
+  return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 }

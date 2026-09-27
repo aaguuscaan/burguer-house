@@ -1,30 +1,36 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { type ReactNode, useState } from "react";
 
+import DeliveryLocationPicker from "../components/DeliveryLocationPicker";
 import {
   type OrderType,
   type PaymentMethod,
-  orderTypeLabels,
   paymentMethodLabels,
   storeConfig,
 } from "../data/store";
 
 import { useCart } from "@/lib/cart";
 import { formatPrice } from "@/lib/format";
+import { type LatLng, distanceKm } from "@/lib/geo";
 import {
-  type ConfirmedOrder,
   type CustomerData,
   GENERIC_ORDER_ERROR,
   buildOrderPayload,
-  estimateDeliveryFee,
   itemDetailLines,
   orderErrorMessage,
-  parseSavedOrder,
-  savedOptionText,
-  whatsAppUrl,
+  parseCreatedOrderId,
 } from "@/lib/order";
+import { saveRecentOrder } from "@/lib/recent-order";
+import { storeStatus } from "@/lib/schedule";
+import {
+  type StoreSettings,
+  estimateDeliveryFee,
+  useNow,
+  useStoreSettings,
+} from "@/lib/store-settings";
 import { supabase } from "@/lib/supabase";
 
 const NOTES_MAX_LENGTH = 500;
@@ -33,43 +39,37 @@ type FieldErrors = {
   orderType: string | null;
   name: string | null;
   phone: string | null;
+  location: string | null;
   address: string | null;
   paymentMethod: string | null;
 };
 
 const FIELD_ORDER: (keyof FieldErrors)[] = [
   "orderType",
+  "location",
+  "address",
   "name",
   "phone",
-  "address",
   "paymentMethod",
 ];
 
 export default function CheckoutPage() {
-  const { items, totalPrice, clearCart } = useCart();
+  const settingsState = useStoreSettings();
+  const { items } = useCart();
+  const [redirecting, setRedirecting] = useState(false);
 
-  const [orderType, setOrderType] = useState<OrderType | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(
-    null
-  );
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [addressReference, setAddressReference] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const [showErrors, setShowErrors] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [confirmed, setConfirmed] = useState<ConfirmedOrder | null>(null);
-
-  /* ---------------- Pedido confirmado ------------------------------ */
-
-  if (confirmed) {
-    return <OrderConfirmation order={confirmed} />;
+  if (redirecting) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#090909] text-white">
+        <div className="text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-600 text-3xl">
+            ✓
+          </div>
+          <p className="mt-4 text-sm font-bold text-neutral-400">Pedido confirmado…</p>
+        </div>
+      </main>
+    );
   }
-
-  /* ---------------- Carrito vacío ---------------------------------- */
 
   if (items.length === 0) {
     return (
@@ -96,23 +96,102 @@ export default function CheckoutPage() {
     );
   }
 
-  /* ---------------- Derivados -------------------------------------- */
+  if (settingsState.status !== "ready") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#090909] px-6 text-white">
+        {settingsState.status === "error" ? (
+          <div className="text-center">
+            <p className="font-black">No pudimos cargar los datos del local</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-4 rounded-full bg-red-600 px-5 py-2 text-sm font-black"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : (
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-red-500" />
+        )}
+      </main>
+    );
+  }
 
-  const deliveryFee = estimateDeliveryFee(orderType, totalPrice);
+  return (
+    <CheckoutForm
+      settings={settingsState.settings}
+      onConfirmed={() => setRedirecting(true)}
+    />
+  );
+}
+
+function CheckoutForm({
+  settings,
+  onConfirmed,
+}: {
+  settings: StoreSettings;
+  onConfirmed: () => void;
+}) {
+  const router = useRouter();
+  const now = useNow();
+  const { items, totalPrice, clearCart } = useCart();
+
+  const deliveryAvailable = settings.deliveryEnabled;
+
+  const [orderType, setOrderType] = useState<OrderType | null>(
+    deliveryAvailable ? null : "pickup"
+  );
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [location, setLocation] = useState<LatLng | null>(null);
+  const [address, setAddress] = useState("");
+  /* Última dirección sugerida por el mapa: si el usuario no la tocó, se reemplaza. */
+  const [autoAddress, setAutoAddress] = useState("");
+  const [addressReference, setAddressReference] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const [showErrors, setShowErrors] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const status = storeStatus(
+    settings.schedule,
+    settings.timezone,
+    settings.acceptingOrders,
+    now
+  );
+
+  const deliveryFee = estimateDeliveryFee(settings, orderType, totalPrice);
   const total = totalPrice + deliveryFee;
   const phoneDigits = phone.replace(/\D/g, "").length;
 
+  const storeLocation = settings.location;
+  const outOfRange =
+    orderType === "delivery" &&
+    storeLocation !== null &&
+    location !== null &&
+    distanceKm(storeLocation, location) > settings.deliveryRadiusKm;
+
   const errors: FieldErrors = {
     orderType: orderType ? null : "Elegí delivery o retiro.",
+    location:
+      orderType !== "delivery" || storeLocation === null
+        ? null
+        : !location
+          ? "Marcá tu ubicación en el mapa."
+          : outOfRange
+            ? "Tu ubicación está fuera de la zona de delivery."
+            : null,
+    address:
+      orderType !== "delivery" || address.trim().length >= 5
+        ? null
+        : "Ingresá calle y número.",
     name: name.trim().length >= 2 ? null : "Ingresá tu nombre.",
     phone:
       phoneDigits >= 8 && phoneDigits <= 15
         ? null
         : "Ingresá un teléfono válido, con código de área.",
-    address:
-      orderType !== "delivery" || address.trim().length >= 5
-        ? null
-        : "Ingresá calle y número.",
     paymentMethod: paymentMethod ? null : "Elegí cómo vas a pagar.",
   };
 
@@ -120,10 +199,17 @@ export default function CheckoutPage() {
   const visibleError = (field: keyof FieldErrors) =>
     showErrors ? errors[field] : null;
 
-  /* ---------------- Confirmar -------------------------------------- */
+  const handleLocationChange = (point: LatLng, label: string | null) => {
+    setLocation(point);
+
+    if (label && (address.trim() === "" || address === autoAddress)) {
+      setAddress(label);
+      setAutoAddress(label);
+    }
+  };
 
   const handleSubmit = async () => {
-    if (saving) {
+    if (saving || !status.open) {
       return;
     }
 
@@ -150,6 +236,7 @@ export default function CheckoutPage() {
             ? `${address.trim()} (${reference})`
             : address.trim()
           : null,
+      location: orderType === "delivery" ? location : null,
       notes: notes.trim(),
       orderType,
       paymentMethod,
@@ -166,29 +253,29 @@ export default function CheckoutPage() {
       if (error) {
         console.error("Error creando el pedido:", error);
         setSubmitError(orderErrorMessage(error.message));
+        setSaving(false);
         return;
       }
 
-      const saved = parseSavedOrder(data);
+      const orderId = parseCreatedOrderId(data);
 
-      if (!saved) {
+      if (!orderId) {
         console.error("Respuesta inesperada al crear el pedido:", data);
         setSubmitError(GENERIC_ORDER_ERROR);
+        setSaving(false);
         return;
       }
 
-      setConfirmed({ ...saved, customer });
+      saveRecentOrder(orderId);
+      onConfirmed();
       clearCart();
-      window.scrollTo({ top: 0 });
+      router.replace(`/pedido/${orderId}`);
     } catch (error) {
       console.error("Error inesperado creando el pedido:", error);
       setSubmitError(GENERIC_ORDER_ERROR);
-    } finally {
       setSaving(false);
     }
   };
-
-  /* ---------------- UI --------------------------------------------- */
 
   return (
     <main className="min-h-screen bg-[#090909] pb-10 text-white">
@@ -204,7 +291,7 @@ export default function CheckoutPage() {
 
           <div>
             <p className="text-xs font-black uppercase tracking-[0.2em] text-red-500">
-              {storeConfig.name}
+              {settings.name}
             </p>
 
             <h1 className="text-lg font-black">Finalizar pedido</h1>
@@ -213,6 +300,18 @@ export default function CheckoutPage() {
       </header>
 
       <div className="mx-auto max-w-2xl px-5 pt-7">
+        {!status.open && (
+          <div
+            role="alert"
+            className="mb-8 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4"
+          >
+            <p className="text-sm font-black text-yellow-300">
+              {status.reason === "paused" ? "Pedidos pausados" : "Estamos cerrados"}
+            </p>
+            <p className="mt-1 text-xs text-yellow-200/70">{status.label}</p>
+          </div>
+        )}
+
         {/* 01 · ENTREGA */}
 
         <Step number="01" title="Entrega" heading="¿Cómo querés recibirlo?">
@@ -220,9 +319,14 @@ export default function CheckoutPage() {
             <ChoiceCard
               selected={orderType === "delivery"}
               hasError={visibleError("orderType") !== null}
+              disabled={!deliveryAvailable}
               icon="🛵"
               title="Delivery"
-              description={`Hasta ${storeConfig.delivery.radiusKm} km`}
+              description={
+                deliveryAvailable
+                  ? `Hasta ${settings.deliveryRadiusKm} km`
+                  : "No disponible ahora"
+              }
               onClick={() => setOrderType("delivery")}
             />
 
@@ -239,18 +343,53 @@ export default function CheckoutPage() {
           <FieldError message={visibleError("orderType")} />
 
           {orderType === "delivery" && (
-            <p className="mt-3 rounded-2xl border border-white/10 bg-[#111111] p-4 text-xs leading-5 text-neutral-400">
-              Llegamos hasta {storeConfig.delivery.radiusKm} km del local.
-              Envío {formatPrice(storeConfig.delivery.baseCost)}, gratis desde{" "}
-              {formatPrice(storeConfig.delivery.freeFrom)}. Si tu dirección
-              queda fuera de la zona, te avisamos por WhatsApp antes de
-              preparar el pedido.
-            </p>
+            <div className="mt-5 space-y-4">
+              <p className="text-xs leading-5 text-neutral-400">
+                Envío {settings.deliveryFee === 0 ? "gratis" : formatPrice(settings.deliveryFee)}
+                {settings.deliveryFreeFrom !== null &&
+                  settings.deliveryFee > 0 &&
+                  `, gratis desde ${formatPrice(settings.deliveryFreeFrom)}`}
+                .
+              </p>
+
+              {storeLocation && (
+                <>
+                  <DeliveryLocationPicker
+                    store={storeLocation}
+                    radiusKm={settings.deliveryRadiusKm}
+                    point={location}
+                    onChange={handleLocationChange}
+                    onSwitchToPickup={() => setOrderType("pickup")}
+                    hasError={visibleError("location") !== null}
+                  />
+                  <FieldError message={visibleError("location")} />
+                </>
+              )}
+
+              <TextField
+                id="field-address"
+                label="Dirección de entrega"
+                placeholder="Calle y número"
+                autoComplete="street-address"
+                value={address}
+                onChange={setAddress}
+                error={visibleError("address")}
+              />
+
+              <TextField
+                id="field-address-reference"
+                label="Piso, depto o referencia (opcional)"
+                placeholder="Ej. 2° B, portón negro"
+                value={addressReference}
+                onChange={setAddressReference}
+                error={null}
+              />
+            </div>
           )}
 
           {orderType === "pickup" && (
             <p className="mt-3 rounded-2xl border border-white/10 bg-[#111111] p-4 text-xs leading-5 text-neutral-400">
-              Retirás en {storeConfig.address}. Te avisamos cuando esté listo.
+              Retirás en {settings.address || "el local"}. Te avisamos cuando esté listo.
             </p>
           )}
         </Step>
@@ -281,29 +420,6 @@ export default function CheckoutPage() {
               error={visibleError("phone")}
             />
 
-            {orderType === "delivery" && (
-              <>
-                <TextField
-                  id="field-address"
-                  label="Dirección"
-                  placeholder="Calle y número"
-                  autoComplete="street-address"
-                  value={address}
-                  onChange={setAddress}
-                  error={visibleError("address")}
-                />
-
-                <TextField
-                  id="field-address-reference"
-                  label="Piso, depto o referencia (opcional)"
-                  placeholder="Ej. 2° B, portón negro"
-                  value={addressReference}
-                  onChange={setAddressReference}
-                  error={null}
-                />
-              </>
-            )}
-
             <div>
               <label
                 htmlFor="field-notes"
@@ -319,7 +435,7 @@ export default function CheckoutPage() {
                 maxLength={NOTES_MAX_LENGTH}
                 placeholder="Ej. tocar timbre, sin cubiertos…"
                 rows={3}
-                className="w-full resize-none rounded-2xl border border-white/10 bg-[#141414] px-4 py-3 text-sm text-white outline-none placeholder:text-neutral-600 focus:border-red-600"
+                className="w-full resize-none rounded-2xl border border-white/10 bg-[#141414] px-4 py-3 text-base text-white outline-none placeholder:text-neutral-600 focus:border-red-600 sm:text-sm"
               />
             </div>
           </div>
@@ -334,9 +450,7 @@ export default function CheckoutPage() {
               hasError={visibleError("paymentMethod") !== null}
               icon="💵"
               title={paymentMethodLabels.cash}
-              description={
-                orderType === "pickup" ? "Pagás al retirar" : "Pagás al recibir"
-              }
+              description={orderType === "pickup" ? "Pagás al retirar" : "Pagás al recibir"}
               onClick={() => setPaymentMethod("cash")}
             />
 
@@ -406,8 +520,6 @@ export default function CheckoutPage() {
           />
         </section>
 
-        {/* ERROR */}
-
         {submitError && (
           <div
             role="alert"
@@ -427,154 +539,33 @@ export default function CheckoutPage() {
           </p>
         )}
 
-        {/* CONFIRMAR */}
-
         <button
           type="button"
-          disabled={saving}
+          disabled={saving || !status.open}
           onClick={handleSubmit}
           aria-busy={saving}
-          className="mt-5 flex w-full items-center justify-between rounded-2xl bg-red-600 px-5 py-4 transition hover:bg-red-500 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
+          className="mt-5 flex w-full items-center justify-between rounded-2xl bg-red-600 px-5 py-4 transition hover:bg-red-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-400"
         >
           <span className="flex items-center gap-2 text-sm font-black uppercase tracking-wide">
             {saving && (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
             )}
-            {saving ? "Confirmando…" : "Confirmar pedido"}
+            {!status.open
+              ? status.reason === "paused"
+                ? "Pedidos pausados"
+                : "Cerrado ahora"
+              : saving
+                ? "Confirmando…"
+                : "Confirmar pedido"}
           </span>
 
           <span className="text-lg font-black">{formatPrice(total)}</span>
         </button>
 
         <p className="mt-3 text-center text-[11px] text-neutral-600">
-          Al confirmar, tu pedido queda registrado. Después podés enviarlo por
-          WhatsApp.
+          Al confirmar, tu pedido queda registrado en {storeConfig.name} y podés
+          seguirlo en vivo.
         </p>
-      </div>
-    </main>
-  );
-}
-
-/*
- * =====================================================================
- * CONFIRMACIÓN
- * =====================================================================
- * Muestra SOLO lo que devolvió la base (precios y opciones guardados).
- */
-
-function OrderConfirmation({ order }: { order: ConfirmedOrder }) {
-  const { customer } = order;
-
-  return (
-    <main className="min-h-screen bg-[#090909] px-5 pb-10 pt-10 text-white">
-      <div className="mx-auto max-w-xl">
-        <div className="text-center">
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-red-600 text-4xl shadow-2xl shadow-red-950/50">
-            ✓
-          </div>
-
-          <p className="mt-6 text-xs font-black uppercase tracking-[0.3em] text-red-500">
-            Pedido recibido
-          </p>
-
-          <h1 className="mt-2 text-4xl font-black">¡Gracias, {customer.name.split(" ")[0]}!</h1>
-
-          <p className="mt-3 text-sm text-neutral-400">Tu número de pedido es</p>
-
-          <div className="mt-3 inline-flex rounded-2xl border border-white/10 bg-[#141414] px-6 py-4">
-            <span className="text-3xl font-black tracking-wider">
-              {order.orderNumber}
-            </span>
-          </div>
-        </div>
-
-        <a
-          href={whatsAppUrl(order)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-8 flex w-full flex-col items-center justify-center rounded-2xl bg-[#25D366] px-5 py-4 text-black transition hover:brightness-110 active:scale-[0.98]"
-        >
-          <span className="text-sm font-black uppercase tracking-wide">
-            Enviar pedido por WhatsApp
-          </span>
-
-          <span className="mt-0.5 text-xs font-bold text-black/60">
-            Así lo confirmamos más rápido
-          </span>
-        </a>
-
-        <section className="mt-6 rounded-3xl border border-white/10 bg-[#141414] p-5">
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-neutral-500">
-            Detalle
-          </p>
-
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-xs text-neutral-500">Entrega</dt>
-              <dd className="font-bold">{orderTypeLabels[customer.orderType]}</dd>
-            </div>
-
-            <div>
-              <dt className="text-xs text-neutral-500">Pago</dt>
-              <dd className="font-bold">
-                {paymentMethodLabels[customer.paymentMethod]}
-              </dd>
-            </div>
-
-            {customer.address && (
-              <div className="col-span-2">
-                <dt className="text-xs text-neutral-500">Dirección</dt>
-                <dd className="break-words font-bold">{customer.address}</dd>
-              </div>
-            )}
-          </dl>
-
-          <ul className="mt-5 space-y-4 border-t border-white/10 pt-5">
-            {order.items.map((item, index) => (
-              <li key={index} className="flex justify-between gap-4 text-sm">
-                <div className="min-w-0">
-                  <p className="font-bold">
-                    {item.quantity}x {item.productName}
-                  </p>
-
-                  {item.options.map((option, optionIndex) => (
-                    <p
-                      key={optionIndex}
-                      className="mt-1 break-words text-xs text-neutral-500"
-                    >
-                      {savedOptionText(option)}
-                    </p>
-                  ))}
-                </div>
-
-                <span className="shrink-0 font-black">
-                  {formatPrice(item.totalPrice)}
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          <Totals
-            subtotal={order.subtotal}
-            orderType={customer.orderType}
-            deliveryFee={order.deliveryFee}
-            total={order.total}
-          />
-        </section>
-
-        {customer.paymentMethod === "transfer" && (
-          <p className="mt-4 rounded-2xl border border-white/10 bg-[#111111] p-4 text-xs leading-5 text-neutral-400">
-            Pagás por transferencia: al enviarnos el pedido por WhatsApp te
-            pasamos el alias.
-          </p>
-        )}
-
-        <Link
-          href="/"
-          className="mt-4 flex w-full items-center justify-center rounded-2xl border border-white/10 bg-[#141414] px-5 py-4 text-sm font-bold text-neutral-300 transition hover:border-white/20 hover:text-white"
-        >
-          Volver al menú
-        </Link>
       </div>
     </main>
   );
@@ -716,6 +707,7 @@ function TextField({
 function ChoiceCard({
   selected,
   hasError,
+  disabled = false,
   icon,
   title,
   description,
@@ -723,6 +715,7 @@ function ChoiceCard({
 }: {
   selected: boolean;
   hasError: boolean;
+  disabled?: boolean;
   icon: string;
   title: string;
   description: string;
@@ -733,8 +726,9 @@ function ChoiceCard({
       type="button"
       role="radio"
       aria-checked={selected}
+      disabled={disabled}
       onClick={onClick}
-      className={`rounded-2xl border p-4 text-left transition active:scale-[0.98] ${
+      className={`rounded-2xl border p-4 text-left transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${
         selected
           ? "border-red-600 bg-red-600/10"
           : hasError

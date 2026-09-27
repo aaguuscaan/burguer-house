@@ -6,10 +6,13 @@ import BottomNav from "./components/BottomNav";
 import CartButton from "./components/CartButton";
 import CategoryCard from "./components/CategoryCard";
 import ProductCard from "./components/ProductCard";
+import RecentOrderBanner from "./components/RecentOrderBanner";
 import SearchBar from "./components/SearchBar";
 import { storeConfig } from "./data/store";
 
 import { productImage } from "@/lib/images";
+import { scheduleSummary, storeStatus } from "@/lib/schedule";
+import { type StoreSettings, useNow, useStoreSettings } from "@/lib/store-settings";
 import { supabase } from "@/lib/supabase";
 import type { MenuCategory, MenuProduct } from "@/lib/types";
 
@@ -73,6 +76,8 @@ async function fetchMenu(): Promise<MenuState> {
 
 export default function Home() {
   const [menu, setMenu] = useState<MenuState>({ status: "loading" });
+  const settingsState = useStoreSettings();
+  const now = useNow();
   const [activeCategory, setActiveCategory] = useState("all");
   const [search, setSearch] = useState("");
 
@@ -152,10 +157,18 @@ export default function Home() {
           </p>
 
           <p className="mt-1 text-xs text-neutral-500">
-            Comida real. Sin vueltas.
+            {storeConfig.tagline}
           </p>
         </div>
+
+        {settingsState.status === "ready" && (
+          <StatusBadge settings={settingsState.settings} now={now} />
+        )}
       </header>
+
+      <div className="px-5 md:px-8">
+        <RecentOrderBanner />
+      </div>
 
       {/* HERO */}
 
@@ -292,29 +305,9 @@ export default function Home() {
 
           <h2 className="mt-2 text-2xl font-black">Estamos para vos.</h2>
 
-          <div className="mt-6 grid gap-5 text-sm text-neutral-400 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <p className="font-bold text-white">📍 Dirección</p>
-              <p className="mt-1">{storeConfig.address}</p>
-            </div>
-
-            <div>
-              <p className="font-bold text-white">🕐 Horarios</p>
-              <p className="mt-1">{storeConfig.schedule}</p>
-            </div>
-
-            <div>
-              <p className="font-bold text-white">🛵 Delivery</p>
-              <p className="mt-1">
-                Hasta {storeConfig.delivery.radiusKm} km del local
-              </p>
-            </div>
-
-            <div>
-              <p className="font-bold text-white">📸 Instagram</p>
-              <p className="mt-1">{storeConfig.instagram}</p>
-            </div>
-          </div>
+          {settingsState.status === "ready" && (
+            <StoreInfo settings={settingsState.settings} />
+          )}
         </div>
       </section>
 
@@ -352,5 +345,83 @@ function MenuSkeleton() {
         </div>
       </div>
     </main>
+  );
+}
+
+function StatusBadge({ settings, now }: { settings: StoreSettings; now: Date }) {
+  const status = storeStatus(
+    settings.schedule,
+    settings.timezone,
+    settings.acceptingOrders,
+    now
+  );
+
+  return (
+    <span
+      title={status.label}
+      className={`flex max-w-[55%] items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-black ${
+        status.open
+          ? "border-green-500/20 bg-green-500/10 text-green-400"
+          : "border-white/10 bg-white/5 text-neutral-400"
+      }`}
+    >
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${
+          status.open ? "animate-pulse bg-green-400" : "bg-neutral-500"
+        }`}
+      />
+      <span className="truncate">
+        {status.open
+          ? status.label
+          : status.reason === "paused"
+            ? "Pedidos pausados"
+            : status.label.replace("Cerrado · ", "")}
+      </span>
+    </span>
+  );
+}
+
+function StoreInfo({ settings }: { settings: StoreSettings }) {
+  return (
+    <div className="mt-6 grid gap-5 text-sm text-neutral-400 sm:grid-cols-2 lg:grid-cols-4">
+      {settings.address && (
+        <div>
+          <p className="font-bold text-white">📍 Dirección</p>
+          <p className="mt-1">{settings.address}</p>
+        </div>
+      )}
+
+      <div>
+        <p className="font-bold text-white">🕐 Horarios</p>
+        {scheduleSummary(settings.schedule).map((line) => (
+          <p key={line} className="mt-1">
+            {line}
+          </p>
+        ))}
+      </div>
+
+      <div>
+        <p className="font-bold text-white">🛵 Delivery</p>
+        <p className="mt-1">
+          {settings.deliveryEnabled
+            ? `Hasta ${settings.deliveryRadiusKm} km del local`
+            : "Solo retiro en el local"}
+        </p>
+      </div>
+
+      {settings.instagram && (
+        <div>
+          <p className="font-bold text-white">📸 Instagram</p>
+          <a
+            href={`https://instagram.com/${settings.instagram.replace(/^@/, "")}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 block hover:text-white"
+          >
+            {settings.instagram}
+          </a>
+        </div>
+      )}
+    </div>
   );
 }

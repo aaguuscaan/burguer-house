@@ -73,6 +73,7 @@ function AdminGate({ children }: { children: ReactNode }) {
 const NAVIGATION = [
   { href: "/admin", label: "Pedidos", icon: "📦" },
   { href: "/admin/products", label: "Productos", icon: "🍔" },
+  { href: "/admin/settings", label: "Configuración", icon: "⚙️" },
 ];
 
 function AdminShell({
